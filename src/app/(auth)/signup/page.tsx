@@ -19,81 +19,52 @@ export default function SignupPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [inviteEmail, setInviteEmail] = useState<string | null>(null);
-  const [orgName, setOrgName] = useState<string | null>(null);
+  const [applicationId, setApplicationId] = useState<string | null>(null);
 
   useEffect(() => {
-    const verifyAndSetup = async () => {
-      // Check for token in URL query params
+    const verifyToken = async () => {
       const token = searchParams.get('token');
       
-      if (token) {
-        // Verify the invite token
-        const { data, error: verifyError } = await supabase.auth.verifyOtp({
-          token_hash: token,
-          type: 'invite',
-        });
-
-        if (verifyError) {
-          console.error('Token verification failed:', verifyError);
-          setError(verifyError.message);
-          setStatus('error');
-          return;
-        }
-
-        if (data.session?.user) {
-          setInviteEmail(data.session.user.email || null);
-          setOrgName(data.session.user.user_metadata?.org_name || 'your organization');
-          setStatus('form');
-          return;
-        }
-      }
-
-      // Check for existing session (maybe already verified)
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (session?.user) {
-        setInviteEmail(session.user.email || null);
-        setOrgName(session.user.user_metadata?.org_name || 'your organization');
-        setStatus('form');
+      if (!token) {
+        setError('No invitation token found.');
+        setStatus('error');
         return;
       }
 
-      // Check for hash params (alternative Supabase flow)
-      const hashParams = new URLSearchParams(window.location.hash.substring(1));
-      const accessToken = hashParams.get('access_token');
+      // Verify token against partner_applications table
+      const { data: application, error: appError } = await supabase
+        .from('partner_applications')
+        .select('*')
+        .eq('invite_token', token)
+        .single();
 
-      if (accessToken) {
-        const { data: { session: hashSession } } = await supabase.auth.getSession();
-        
-        if (hashSession?.user) {
-          setInviteEmail(hashSession.user.email || null);
-          setOrgName(hashSession.user.user_metadata?.org_name || 'your organization');
-          setStatus('form');
-          return;
-        }
+      if (appError || !application) {
+        console.error('Token verification failed:', appError);
+        setError('Invalid or expired invitation link.');
+        setStatus('error');
+        return;
       }
 
-      // No valid token found
-      setError('No invitation token found. Please use the link from your invitation email.');
-      setStatus('error');
+      // Check if already signed up
+      if (application.user_id) {
+        setError('This invitation has already been used.');
+        setStatus('error');
+        return;
+      }
+
+      setInviteEmail(application.email);
+      setApplicationId(application.id);
+      setStatus('form');
     };
 
-    verifyAndSetup();
+    verifyToken();
   }, [searchParams]);
 
   const validatePassword = (pwd: string): string | null => {
-    if (pwd.length < 8) {
-      return 'Password must be at least 8 characters';
-    }
-    if (!/[A-Z]/.test(pwd)) {
-      return 'Password must contain at least one uppercase letter';
-    }
-    if (!/[a-z]/.test(pwd)) {
-      return 'Password must contain at least one lowercase letter';
-    }
-    if (!/[0-9]/.test(pwd)) {
-      return 'Password must contain at least one number';
-    }
+    if (pwd.length < 8) return 'Password must be at least 8 characters';
+    if (!/[A-Z]/.test(pwd)) return 'Password must contain at least one uppercase letter';
+    if (!/[a-z]/.test(pwd)) return 'Password must contain at least one lowercase letter';
+    if (!/[0-9]/.test(pwd)) return 'Password must contain at least one number';
     return null;
   };
 
@@ -117,20 +88,41 @@ export default function SignupPage() {
       return;
     }
 
+    if (!inviteEmail || !applicationId) {
+      setError('Invalid invitation state');
+      return;
+    }
+
     setIsLoading(true);
 
     try {
-      const { error: updateError } = await supabase.auth.updateUser({
+      // Create the user account with Supabase
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email: inviteEmail,
         password,
-        data: {
-          first_name: firstName.trim(),
-          last_name: lastName.trim(),
+        options: {
+          data: {
+            first_name: firstName.trim(),
+            last_name: lastName.trim(),
+            role: 'partner_manager',
+          },
         },
       });
 
-      if (updateError) {
-        setError(updateError.message);
+      if (signUpError) {
+        setError(signUpError.message);
         return;
+      }
+
+      // Update the application with user_id
+      if (signUpData.user) {
+        await supabase
+          .from('partner_applications')
+          .update({ 
+            user_id: signUpData.user.id,
+            invite_token: null // Clear token after use
+          })
+          .eq('id', applicationId);
       }
 
       setStatus('success');
@@ -152,7 +144,7 @@ export default function SignupPage() {
           <Loader2 className="w-8 h-8 text-explorer-teal animate-spin" />
         </div>
         <h2 className="text-2xl font-bold text-deep-play-blue mb-2">Verifying invitation...</h2>
-        <p className="text-slate-500">Please wait while we verify your invitation.</p>
+        <p className="text-slate-500">Please wait.</p>
       </Card>
     );
   }
@@ -164,9 +156,7 @@ export default function SignupPage() {
           <CheckCircle2 className="w-8 h-8 text-emerald-600" />
         </div>
         <h2 className="text-2xl font-bold text-deep-play-blue mb-2">Account created!</h2>
-        <p className="text-slate-500 mb-6">
-          Welcome to the team! Redirecting you to the dashboard...
-        </p>
+        <p className="text-slate-500 mb-6">Redirecting to dashboard...</p>
         <Link href="/partner">
           <Button className="w-full">Go to Dashboard</Button>
         </Link>
@@ -182,17 +172,9 @@ export default function SignupPage() {
         </div>
         <h2 className="text-2xl font-bold text-deep-play-blue mb-2">Invalid invitation</h2>
         <p className="text-slate-500 mb-6">{error}</p>
-        <div className="space-y-3">
-          <Link href="/login">
-            <Button variant="outline" className="w-full">Go to sign in</Button>
-          </Link>
-          <p className="text-sm text-slate-400">
-            Need help?{' '}
-            <a href="mailto:support@kidventurepass.com" className="text-explorer-teal hover:underline">
-              Contact support
-            </a>
-          </p>
-        </div>
+        <Link href="/login">
+          <Button variant="outline" className="w-full">Go to sign in</Button>
+        </Link>
       </Card>
     );
   }
@@ -201,9 +183,6 @@ export default function SignupPage() {
     <Card className="p-8">
       <div className="text-center mb-6">
         <h2 className="text-2xl font-bold text-deep-play-blue">Create your account</h2>
-        <p className="text-slate-500 mt-1">
-          You&apos;ve been invited to join <span className="font-medium">{orgName}</span>
-        </p>
         {inviteEmail && (
           <p className="text-sm text-slate-400 mt-1">{inviteEmail}</p>
         )}
@@ -275,15 +254,6 @@ export default function SignupPage() {
           Create account
         </Button>
       </form>
-
-      <div className="mt-6 text-center">
-        <p className="text-xs text-slate-400">
-          By creating an account, you agree to our{' '}
-          <a href="#" className="text-explorer-teal hover:underline">Terms of Service</a>
-          {' '}and{' '}
-          <a href="#" className="text-explorer-teal hover:underline">Privacy Policy</a>
-        </p>
-      </div>
     </Card>
   );
 }
