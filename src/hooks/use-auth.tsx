@@ -9,7 +9,7 @@ import { mockUser } from '@/lib/mock-data';
 const USE_MOCK_DATA = process.env.NEXT_PUBLIC_USE_MOCK_DATA === 'true';
 
 // Public routes that don't require authentication
-const PUBLIC_ROUTES = ['/login', '/forgot-password', '/reset-password', '/verify-email', '/accept-invite'];
+const PUBLIC_ROUTES = ['/login', '/forgot-password', '/reset-password', '/verify-email', '/signup'];
 
 interface AuthContextType extends AuthSession {
   signOut: () => Promise<void>;

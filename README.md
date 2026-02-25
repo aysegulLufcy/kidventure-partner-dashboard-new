@@ -9,7 +9,7 @@ A premium, production-ready partner dashboard for kids activity studios to manag
 - **Forgot Password** (`/forgot-password`) - Password reset request
 - **Reset Password** (`/reset-password`) - Set new password from email link
 - **Email Verification** (`/verify-email`) - Verify email address
-- **Accept Invite** (`/accept-invite`) - Staff invitation acceptance flow
+- **Accept Invite** (`/signup`) - Staff invitation acceptance flow
 - **Role-based Access** - Only partner_staff and partner_manager roles can access
 
 ### 🏠 Dashboard (`/partner`)
@@ -79,7 +79,7 @@ src/
 │   │   ├── forgot-password/
 │   │   ├── reset-password/
 │   │   ├── verify-email/
-│   │   └── accept-invite/
+│   │   └── signup/
 │   ├── partner/                # Protected partner routes
 │   │   ├── layout.tsx          # Partner layout with sidebar & RBAC
 │   │   ├── page.tsx            # Dashboard home
@@ -167,7 +167,7 @@ npm run dev
 ### Staff Invite Flow
 1. Manager invites staff via Settings page
 2. Staff receives email with invite link
-3. Clicks link, redirected to `/accept-invite`
+3. Clicks link, redirected to `/signup`
 4. Enters name and sets password
 5. Account created with appropriate role
 

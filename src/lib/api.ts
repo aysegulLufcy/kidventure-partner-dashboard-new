@@ -347,12 +347,12 @@ export async function inviteStaff(
   }
   
   // In production, this calls the backend API which uses Supabase Admin
-  // to send an invite email with the accept-invite redirect URL
+  // to send an invite email with the signup redirect URL
   return apiRequest<StaffMember>('/api/partner/staff/invite', {
     method: 'POST',
     body: JSON.stringify({
       ...request,
-      redirectTo: `${typeof window !== 'undefined' ? window.location.origin : ''}/accept-invite`,
+      redirectTo: `${typeof window !== 'undefined' ? window.location.origin : ''}/signup`,
     }),
   });
 }
