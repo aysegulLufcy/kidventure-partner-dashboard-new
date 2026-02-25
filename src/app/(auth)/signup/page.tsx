@@ -41,7 +41,7 @@ export default function SignupPage() {
 
       const { data: application, error: appError } = await supabase
         .from('partner_applications')
-        .select('id,email,user_id') // ✅ don’t pull *
+        .select('id,contact_email,user_id') // ✅ don’t pull *
         .eq('invite_token', token)
         .single();
 
@@ -60,7 +60,7 @@ export default function SignupPage() {
         return;
       }
 
-      setInviteEmail(application.email);
+      setInviteEmail(application.contact_email);
       setApplicationId(String(application.id));
       setStatus('form');
     };
