@@ -9,31 +9,45 @@ import { Loader2 } from 'lucide-react';
 export default function SignupPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState('Verifying invitation...');
 
   useEffect(() => {
     const token = searchParams.get('token');
     
-    if (token) {
-      // Verify the invite token with Supabase
-      supabase.auth.verifyOtp({
-        token_hash: token,
-        type: 'invite',
-      }).then(({ data, error }) => {
-        if (error) {
-          console.error('Token verification failed:', error);
-          setError(error.message);
-          setTimeout(() => {
-            router.replace('/login?error=invalid_token');
-          }, 2000);
-        } else {
-          // Token verified, session created - redirect to accept-invite to set password
-          router.replace('/accept-invite');
-        }
-      });
-    } else {
+    if (!token) {
       router.replace('/login');
+      return;
     }
+
+    const verifyToken = async () => {
+      // Try different token types
+      const tokenTypes = ['invite', 'signup', 'magiclink'] as const;
+      
+      for (const type of tokenTypes) {
+        setStatus(`Trying ${type}...`);
+        
+        const { data, error } = await supabase.auth.verifyOtp({
+          token_hash: token,
+          type,
+        });
+        
+        if (!error && data.session) {
+          console.log('Success with type:', type);
+          router.replace('/accept-invite');
+          return;
+        }
+        
+        console.log(`${type} failed:`, error?.message);
+      }
+      
+      // All types failed - show error
+      setStatus('Invalid or expired invitation link');
+      setTimeout(() => {
+        router.replace('/login?error=invalid_token');
+      }, 3000);
+    };
+
+    verifyToken();
   }, [searchParams, router]);
 
   return (
@@ -42,11 +56,8 @@ export default function SignupPage() {
         <Loader2 className="w-8 h-8 text-explorer-teal animate-spin" />
       </div>
       <h2 className="text-2xl font-bold text-deep-play-blue mb-2">
-        {error ? 'Verification Failed' : 'Verifying invitation...'}
+        {status}
       </h2>
-      <p className="text-slate-500">
-        {error || 'Please wait while we verify your invitation.'}
-      </p>
     </Card>
   );
 }
