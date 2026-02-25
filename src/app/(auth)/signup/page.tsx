@@ -7,7 +7,7 @@ import { Button, Input, Card } from '@/components/ui';
 import { supabase } from '@/lib/supabase';
 import { User, Lock, Eye, EyeOff, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 
-export default function AcceptInvitePage() {
+export default function SignupPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [status, setStatus] = useState<'loading' | 'form' | 'success' | 'error'>('loading');
@@ -22,33 +22,64 @@ export default function AcceptInvitePage() {
   const [orgName, setOrgName] = useState<string | null>(null);
 
   useEffect(() => {
-    const checkInvite = async () => {
-      // Check for invite token in URL hash (Supabase magic link format)
+    const verifyAndSetup = async () => {
+      // Check for token in URL query params
+      const token = searchParams.get('token');
+      
+      if (token) {
+        // Verify the invite token
+        const { data, error: verifyError } = await supabase.auth.verifyOtp({
+          token_hash: token,
+          type: 'invite',
+        });
+
+        if (verifyError) {
+          console.error('Token verification failed:', verifyError);
+          setError(verifyError.message);
+          setStatus('error');
+          return;
+        }
+
+        if (data.session?.user) {
+          setInviteEmail(data.session.user.email || null);
+          setOrgName(data.session.user.user_metadata?.org_name || 'your organization');
+          setStatus('form');
+          return;
+        }
+      }
+
+      // Check for existing session (maybe already verified)
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session?.user) {
+        setInviteEmail(session.user.email || null);
+        setOrgName(session.user.user_metadata?.org_name || 'your organization');
+        setStatus('form');
+        return;
+      }
+
+      // Check for hash params (alternative Supabase flow)
       const hashParams = new URLSearchParams(window.location.hash.substring(1));
       const accessToken = hashParams.get('access_token');
-      const type = hashParams.get('type');
 
-      if (type === 'invite' && accessToken) {
-        // Get session from the invite token
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (accessToken) {
+        const { data: { session: hashSession } } = await supabase.auth.getSession();
         
-        if (session?.user) {
-          setInviteEmail(session.user.email || null);
-          setOrgName(session.user.user_metadata?.org_name || 'your organization');
+        if (hashSession?.user) {
+          setInviteEmail(hashSession.user.email || null);
+          setOrgName(hashSession.user.user_metadata?.org_name || 'your organization');
           setStatus('form');
-        } else {
-          setStatus('error');
-          setError('Invalid or expired invitation link.');
+          return;
         }
-      } else {
-        // No valid invite token
-        setStatus('error');
-        setError('No invitation token found. Please use the link from your invitation email.');
       }
+
+      // No valid token found
+      setError('No invitation token found. Please use the link from your invitation email.');
+      setStatus('error');
     };
 
-    checkInvite();
-  }, []);
+    verifyAndSetup();
+  }, [searchParams]);
 
   const validatePassword = (pwd: string): string | null => {
     if (pwd.length < 8) {
@@ -70,7 +101,6 @@ export default function AcceptInvitePage() {
     e.preventDefault();
     setError(null);
 
-    // Validate inputs
     if (!firstName.trim() || !lastName.trim()) {
       setError('Please enter your full name');
       return;
@@ -90,7 +120,6 @@ export default function AcceptInvitePage() {
     setIsLoading(true);
 
     try {
-      // Update user profile and password
       const { error: updateError } = await supabase.auth.updateUser({
         password,
         data: {
@@ -106,7 +135,6 @@ export default function AcceptInvitePage() {
 
       setStatus('success');
       
-      // Redirect after delay
       setTimeout(() => {
         router.push('/partner');
       }, 2000);
@@ -123,7 +151,7 @@ export default function AcceptInvitePage() {
         <div className="w-16 h-16 rounded-full bg-explorer-teal/10 flex items-center justify-center mx-auto mb-4">
           <Loader2 className="w-8 h-8 text-explorer-teal animate-spin" />
         </div>
-        <h2 className="text-2xl font-bold text-deep-play-blue mb-2">Loading invitation...</h2>
+        <h2 className="text-2xl font-bold text-deep-play-blue mb-2">Verifying invitation...</h2>
         <p className="text-slate-500">Please wait while we verify your invitation.</p>
       </Card>
     );
@@ -172,7 +200,7 @@ export default function AcceptInvitePage() {
   return (
     <Card className="p-8">
       <div className="text-center mb-6">
-        <h2 className="text-2xl font-bold text-deep-play-blue">Accept invitation</h2>
+        <h2 className="text-2xl font-bold text-deep-play-blue">Create your account</h2>
         <p className="text-slate-500 mt-1">
           You&apos;ve been invited to join <span className="font-medium">{orgName}</span>
         </p>
