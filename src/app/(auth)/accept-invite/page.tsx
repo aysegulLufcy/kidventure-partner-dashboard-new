@@ -23,25 +23,36 @@ export default function AcceptInvitePage() {
 
   useEffect(() => {
     const checkInvite = async () => {
+      // First, check if there's already a session (from /signup token verification)
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session?.user) {
+        // User already has a session - show the form
+        setInviteEmail(session.user.email || null);
+        setOrgName(session.user.user_metadata?.org_name || 'your organization');
+        setStatus('form');
+        return;
+      }
+
       // Check for invite token in URL hash (Supabase magic link format)
       const hashParams = new URLSearchParams(window.location.hash.substring(1));
       const accessToken = hashParams.get('access_token');
       const type = hashParams.get('type');
 
-      if (type === 'invite' && accessToken) {
-        // Get session from the invite token
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (accessToken && (type === 'invite' || type === 'signup' || type === 'magiclink')) {
+        // Try to get session again (hash should auto-authenticate)
+        const { data: { session: hashSession } } = await supabase.auth.getSession();
         
-        if (session?.user) {
-          setInviteEmail(session.user.email || null);
-          setOrgName(session.user.user_metadata?.org_name || 'your organization');
+        if (hashSession?.user) {
+          setInviteEmail(hashSession.user.email || null);
+          setOrgName(hashSession.user.user_metadata?.org_name || 'your organization');
           setStatus('form');
         } else {
           setStatus('error');
           setError('Invalid or expired invitation link.');
         }
       } else {
-        // No valid invite token
+        // No valid invite token and no session
         setStatus('error');
         setError('No invitation token found. Please use the link from your invitation email.');
       }
