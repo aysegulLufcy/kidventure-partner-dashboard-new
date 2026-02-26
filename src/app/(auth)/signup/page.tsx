@@ -21,79 +21,21 @@ export default function SignupPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // ✅ depend on the token string (not the searchParams object)
+  // ✅ stable token value
   const token = useMemo(() => searchParams.get('token'), [searchParams]);
 
   const [status, setStatus] = useState<Status>('loading');
+  const [error, setError] = useState<string | null>(null);
+
+  const [inviteEmail, setInviteEmail] = useState<string | null>(null);
 
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-
   const [showPassword, setShowPassword] = useState(false);
+
   const [isLoading, setIsLoading] = useState(false);
-
-  const [error, setError] = useState<string | null>(null);
-
-  // invite state
-  const [inviteEmail, setInviteEmail] = useState<string | null>(null);
-  const [applicationId, setApplicationId] = useState<string | null>(null);
-
-  // ✅ verify token once (and when token changes)
-  useEffect(() => {
-    let cancelled = false;
-
-    const verifyToken = async () => {
-      setStatus('loading');
-      setError(null);
-      setInviteEmail(null);
-      setApplicationId(null);
-
-      if (!token) {
-        setError('No invitation token found.');
-        setStatus('error');
-        return;
-      }
-
-      const { data: application, error: appError } = await supabase
-        .from('partner_applications')
-        .select('id, contact_email, user_id')
-        .eq('invite_token', token)
-        .single();
-
-      if (cancelled) return;
-
-      if (appError || !application) {
-        console.error('Token verification failed:', appError);
-        setError('Invalid or expired invitation link.');
-        setStatus('error');
-        return;
-      }
-
-      if (application.user_id) {
-        setError('This invitation has already been used.');
-        setStatus('error');
-        return;
-      }
-
-      if (!application.contact_email) {
-        setError('This invitation is missing an email address. Please contact support.');
-        setStatus('error');
-        return;
-      }
-
-      setInviteEmail(application.contact_email);
-      setApplicationId(String(application.id));
-      setStatus('form');
-    };
-
-    verifyToken();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [token]);
 
   const validatePassword = (pwd: string): string | null => {
     if (pwd.length < 8) return 'Password must be at least 8 characters';
@@ -103,18 +45,82 @@ export default function SignupPage() {
     return null;
   };
 
+  // ✅ Verify token via Edge Function (no RLS headaches)
+  useEffect(() => {
+    let cancelled = false;
+
+    const verify = async () => {
+      setStatus('loading');
+      setError(null);
+      setInviteEmail(null);
+
+      if (!token) {
+        setError('No invitation token found.');
+        setStatus('error');
+        return;
+      }
+
+      try {
+        const { data, error: fnError } = await supabase.functions.invoke(
+          'claim-partner-invite',
+          {
+            body: {
+              action: 'verify',
+              token,
+            },
+          }
+        );
+
+        if (cancelled) return;
+
+        if (fnError) {
+          console.error('verify fnError:', fnError);
+          setError(fnError.message || 'Invalid or expired invitation link.');
+          setStatus('error');
+          return;
+        }
+
+        if (!data?.email) {
+          setError('Invalid or expired invitation link.');
+          setStatus('error');
+          return;
+        }
+
+        setInviteEmail(String(data.email));
+        setStatus('form');
+      } catch (e) {
+        console.error(e);
+        if (!cancelled) {
+          setError('Could not verify invitation. Please try again.');
+          setStatus('error');
+        }
+      }
+    };
+
+    verify();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    // ✅ prevent submit until invite verified
-    if (!inviteEmail || !applicationId || !token) {
+    if (!token) {
+      setError('No invitation token found.');
+      setStatus('error');
+      return;
+    }
+
+    if (!inviteEmail) {
       setError('Invitation is still being verified. Please refresh and try again.');
       return;
     }
 
     if (!firstName.trim() || !lastName.trim()) {
-      setError('Please enter your full name.');
+      setError('Please enter your full name');
       return;
     }
 
@@ -125,77 +131,58 @@ export default function SignupPage() {
     }
 
     if (password !== confirmPassword) {
-      setError('Passwords do not match.');
+      setError('Passwords do not match');
       return;
     }
 
     setIsLoading(true);
 
     try {
-      // 1) Create auth user
-      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-        email: inviteEmail,
-        password,
-        options: {
-          data: {
-            first_name: firstName.trim(),
-            last_name: lastName.trim(),
-            role: 'partner_manager',
+      // 1) Claim invite + create user + update partner_applications (server-side)
+      const { data, error: fnError } = await supabase.functions.invoke(
+        'claim-partner-invite',
+        {
+          body: {
+            action: 'claim',
+            token,
+            firstName: firstName.trim(),
+            lastName: lastName.trim(),
+            password,
           },
-        },
+        }
+      );
+
+      if (fnError) {
+        console.error('claim fnError:', fnError);
+        setError(fnError.message || 'Could not create account. Please try again.');
+        return;
+      }
+
+      // Function should return the email it created for (the invite email)
+      const emailToLogin = String(data?.email || inviteEmail);
+
+      // 2) Optional but recommended: sign them in so they have a session immediately
+      const { error: signInErr } = await supabase.auth.signInWithPassword({
+        email: emailToLogin,
+        password,
       });
 
-      if (signUpError) {
-        setError(signUpError.message);
-        return;
-      }
-
-      const newUserId = signUpData.user?.id;
-      if (!newUserId) {
-        // This can happen if email confirmation is enabled and user object is not returned
-        // Still mark invite as used only after we can associate a user_id (safer).
-        setError(
-          'Account created, but email confirmation may be required before activating this invite. Please check your email.'
-        );
-        setStatus('error');
-        return;
-      }
-
-      // 2) ✅ Atomically mark invite as used (prevents reuse / race condition)
-      const { data: updated, error: updateErr } = await supabase
-        .from('partner_applications')
-        .update({ user_id: newUserId, invite_token: null })
-        .eq('id', applicationId)
-        .eq('invite_token', token) // only update if token still matches
-        .is('user_id', null) // only update if not already used
-        .select('id')
-        .single();
-
-      if (updateErr || !updated) {
-        console.error('Failed to lock invite / update partner_applications:', updateErr);
-
-        // Optional: surface a user-friendly message
-        setError(
-          'Your account was created, but this invite may have already been used. Please contact support.'
-        );
-        setStatus('error');
-        return;
+      // If sign-in fails, still show success (account was created)
+      if (signInErr) {
+        console.warn('Sign-in after claim failed:', signInErr);
       }
 
       setStatus('success');
-      setTimeout(() => router.push('/partner'), 1500);
+      setTimeout(() => router.push('/partner'), 1200);
     } catch (err) {
       console.error(err);
       setError('An unexpected error occurred. Please try again.');
-      setStatus('error');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // -----------------------
-  // UI
-  // -----------------------
+  // ---------------- UI ----------------
 
   if (status === 'loading') {
     return (
